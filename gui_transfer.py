@@ -1,0 +1,184 @@
+import os
+import sys
+import tkinter as tk
+from tkinter import filedialog, messagebox
+
+# Пытаемся импортировать fitz (PyMuPDF)
+try:
+    import fitz
+except ImportError:
+    pass
+
+
+def transfer_annotations_batch(source_pdf_path, target_dir_path):
+    if not os.path.exists(source_pdf_path):
+        raise FileNotFoundError("Исходный файл с пометками не найден.")
+    if not os.path.exists(target_dir_path):
+        raise FileNotFoundError("Целевая папка не найдена.")
+
+    # Находим все PDF-файлы в выбранной директории
+    # Исключаем сам файл-источник, если он вдруг лежит в этой же папке
+    pdf_files = [
+        f
+        for f in os.listdir(target_dir_path)
+        if f.lower().endswith(".pdf")
+        and os.path.abspath(os.path.join(target_dir_path, f))
+        != os.path.abspath(source_pdf_path)
+    ]
+
+    if not pdf_files:
+        return "В выбранной папке не найдено других PDF-файлов для обработки."
+
+    # Создаем безопасную папку для результатов
+    output_dir = os.path.join(target_dir_path, "processed_with_notes")
+    os.makedirs(output_dir, exist_ok=True)
+
+    success_count = 0
+    errors = []
+
+    for file_name in pdf_files:
+        src_doc = None
+        tgt_doc = None
+        try:
+            target_path = os.path.join(target_dir_path, file_name)
+            output_path = os.path.join(output_dir, file_name)
+
+            src_doc = fitz.open(source_pdf_path)
+            tgt_doc = fitz.open(target_path)
+
+            # Переносим только общие страницы
+            total_pages = min(len(src_doc), len(tgt_doc))
+
+            for page_num in range(total_pages):
+                src_page = src_doc[page_num]
+                tgt_page = tgt_doc[page_num]
+
+                for annot in src_page.annots():
+                    new_annot = tgt_page.add_annot(annot.rect, annot.type)
+                    new_annot.set_info(annot.info)
+
+                    if annot.colors:
+                        new_annot.set_colors(annot.colors)
+                    if annot.border:
+                        new_annot.set_border(annot.border)
+
+                    new_annot.update()
+
+            # Сохраняем сжатый результат в новую папку
+            tgt_doc.save(output_path, garbage=3, deflate=True)
+            success_count += 1
+        except Exception as e:
+            errors.append(f"Ошибка в файле {file_name}: {str(e)}")
+        finally:
+            if tgt_doc:
+                tgt_doc.close()
+            if src_doc:
+                src_doc.close()
+
+    result_msg = (
+        f"Успешно обработано файлов: {success_count} из {len(pdf_files)}.\n"
+        f"Результаты сохранены в папку 'processed_with_notes'."
+    )
+    if errors:
+        result_msg += "\n\nОшибки при обработке:\n" + "\n".join(errors)
+
+    return result_msg
+
+
+class PDFTransferGUI:
+
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Пакетный перенос пометок PDF")
+        self.root.geometry("550x260")
+        self.root.resizable(False, False)
+
+        # Переменные для путей
+        self.source_path = tk.StringVar()
+        self.target_dir = tk.StringVar()
+
+        # Интерфейс: Выбор исходного файла
+        tk.Label(
+            root, text="Файл с пометками (образец):", font=("Arial", 10, "bold")
+        ).pack(anchor="w", padx=20, pady=(20, 2))
+        frame1 = tk.Frame(root)
+        frame1.pack(fill="x", padx=20)
+        tk.Entry(
+            frame1, textvariable=self.source_path, font=("Arial", 10)
+        ).pack(side="left", fill="x", expand=True)
+        tk.Button(
+            frame1, text="Обзор...", bg="#e0e0e0", command=self.browse_file
+        ).pack(side="right", padx=(10, 0))
+
+        # Интерфейс: Выбор папки
+        tk.Label(
+            root,
+            text="Папка с чистыми PDF (куда копировать):",
+            font=("Arial", 10, "bold"),
+        ).pack(anchor="w", padx=20, pady=(15, 2))
+        frame2 = tk.Frame(root)
+        frame2.pack(fill="x", padx=20)
+        tk.Entry(
+            frame2, textvariable=self.target_dir, font=("Arial", 10)
+        ).pack(side="left", fill="x", expand=True)
+        tk.Button(
+            frame2, text="Обзор...", bg="#e0e0e0", command=self.browse_folder
+        ).pack(side="right", padx=(10, 0))
+
+        # Кнопка Запуска
+        self.start_btn = tk.Button(
+            root,
+            text="ЗАПУСТИТЬ ПЕРЕНОС",
+            font=("Arial", 11, "bold"),
+            bg="#2e7d32",
+            fg="white",
+            command=self.start_process,
+            height=2,
+        )
+        self.start_btn.pack(fill="x", padx=20, pady=30)
+
+    def browse_file(self):
+        filename = filedialog.askopenfilename(filetypes=[("PDF files", "*.pdf")])
+        if filename:
+            self.source_path.set(filename)
+
+    def browse_folder(self):
+        directory = filedialog.askdirectory()
+        if directory:
+            self.target_dir.set(directory)
+
+    def start_process(self):
+        src = self.source_path.get().strip()
+        tgt = self.target_dir.get().strip()
+
+        if not src or not tgt:
+            messagebox.showwarning(
+                "Внимание",
+                "Пожалуйста, выберите исходный файл и целевую папку.",
+            )
+            return
+
+        self.start_btn.config(text="ОБРАБОТКА...", state="disabled")
+        self.root.update_idletasks()
+
+        try:
+            summary = transfer_annotations_batch(src, tgt)
+            messagebox.showinfo("Готово", summary)
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Произошла ошибка: {str(e)}")
+        finally:
+            self.start_btn.config(text="ЗАПУСТИТЬ ПЕРЕНОС", state="normal")
+
+
+if __name__ == "__main__":
+    # Фикс размытых шрифтов на Windows при масштабировании экрана (DPI)
+    try:
+        from ctypes import windll
+
+        windll.shcore.SetProcessDpiAwareness(1)
+    except:
+        pass
+
+    root = tk.Tk()
+    app = PDFTransferGUI(root)
+    root.mainloop()
