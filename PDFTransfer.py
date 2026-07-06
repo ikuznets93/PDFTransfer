@@ -59,6 +59,14 @@ def transfer_annotations_batch(source_pdf_path, target_dir_path):
                     try:
                         if annot_type_num == 0:  # Text / Sticky Note
                             new_annot = tgt_page.add_text_annot(rect.tl)
+                        elif annot_type_num == 2:  # FreeText (Печатный текст / Текстовые блоки)
+                            # Извлекаем текст из старого блока, чтобы передать в новый
+                            text_content = (
+                                annot.info.get("content", "")
+                                if annot.info
+                                else ""
+                            )
+                            new_annot = tgt_page.add_freetext_annot(rect, text_content)
                         elif annot_type_num == 3:  # Line
                             new_annot = tgt_page.add_line_annot(rect.tl, rect.br)
                         elif annot_type_num == 4:  # Square / Rect
