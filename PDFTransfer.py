@@ -68,8 +68,7 @@ def transfer_annotations_batch(source_pdf_path, target_dir_path):
                                 else ""
                             )
 
-                            # Проверяем, повернута ли сама страница (0, 90, 180, 270 градусов)
-                            # Если страница повернута, MuPDF может переворачивать текст, компенсируем это
+                            # Проверяем поворот страницы
                             page_rotation = tgt_page.rotation
 
                             # Создаем текстовый блок
@@ -80,26 +79,41 @@ def transfer_annotations_batch(source_pdf_path, target_dir_path):
                             if new_annot:
                                 # Корректируем поворот текстового блока под поворот страницы
                                 if page_rotation != 0:
-                                    # В некоторых версиях поворот задается через свойства, пробуем выставить
                                     try:
                                         new_annot.set_rotation(page_rotation)
                                     except:
                                         pass
 
-                                # Пытаемся скопировать параметры шрифта и ЦВЕТА текста
+                                # === НАДЕЖНЫЙ ПЕРЕНОС ЦВЕТА ШРИФТА И ОФОРМЛЕНИЯ ===
                                 try:
-                                    # Вытягиваем свойства текста из старой аннотации (шрифт, размер, цвет)
-                                    props = annot.get_text_properties()
-                                    if props:
-                                        # Устанавливаем их в новый блок (сюда входит цвет шрифта)
-                                        new_annot.set_text_properties(props)
+                                    # 1. Пробуем скопировать низкоуровневую строку оформления (DA),
+                                    # где зашит цвет шрифта, размер и имя шрифта
+                                    da_string = annot.parent.load_annot(
+                                        annot.xref
+                                    )._get_compiled_DA()
+                                    if da_string:
+                                        # Напрямую прописываем DA в новый объект через PDF-словарь
+                                        new_annot.set_da(da_string)
                                 except:
-                                    # Резервный способ скопировать цвет шрифта, если get_text_properties не сработал
+                                    # 2. Если не вышло, пробуем через стандартные свойства текста
                                     try:
-                                        if hasattr(annot, "get_colors") and annot.get_colors():
-                                            new_annot.set_colors(annot.get_colors())
+                                        props = annot.get_text_properties()
+                                        if props:
+                                            new_annot.set_text_properties(props)
                                     except:
                                         pass
+
+                                # 3. Копируем цвет рамки/фона (если он был у блока в FineReader)
+                                try:
+                                    if (
+                                        hasattr(annot, "get_colors")
+                                        and annot.get_colors()
+                                    ):
+                                        new_annot.set_colors(annot.get_colors())
+                                    elif annot.colors:
+                                        new_annot.set_colors(annot.colors)
+                                except:
+                                    pass
                         elif annot_type_num == 3:  # Line
                             new_annot = tgt_page.add_line_annot(rect.tl, rect.br)
                         elif annot_type_num == 4:  # Square / Rect
