@@ -10,50 +10,6 @@ except ImportError:
     pass
 
 
-def _copy_pdf_style_keys(src_doc, src_xref, dst_annot):
-    """Копирует низкоуровневые свойства PDF-аннотации, включая цвет текста FreeText."""
-    try:
-        src_obj = src_doc.xref_object(src_xref)
-    except Exception:
-        return
-
-    if "/DA" in src_obj:
-        raw_da = src_doc.xref_get_key(src_xref, "DA")[1]
-        if raw_da:
-            try:
-                fitz.mupdf.pdf_dict_put_text_string(
-                    fitz.mupdf.pdf_annot_obj(dst_annot.this),
-                    fitz.PDF_NAME("DA"),
-                    raw_da,
-                )
-            except Exception:
-                pass
-
-    if "/C" in src_obj:
-        raw_c = src_doc.xref_get_key(src_xref, "C")[1]
-        if raw_c:
-            try:
-                fitz.mupdf.pdf_dict_put_text_string(
-                    fitz.mupdf.pdf_annot_obj(dst_annot.this),
-                    fitz.PDF_NAME("C"),
-                    raw_c,
-                )
-            except Exception:
-                pass
-
-    if "/IC" in src_obj:
-        raw_ic = src_doc.xref_get_key(src_xref, "IC")[1]
-        if raw_ic:
-            try:
-                fitz.mupdf.pdf_dict_put_text_string(
-                    fitz.mupdf.pdf_annot_obj(dst_annot.this),
-                    fitz.PDF_NAME("IC"),
-                    raw_ic,
-                )
-            except Exception:
-                pass
-
-
 def transfer_annotations_batch(source_pdf_path, target_dir_path):
     if not os.path.exists(source_pdf_path):
         raise FileNotFoundError("Исходный файл с пометками не найден.")
@@ -129,13 +85,56 @@ def transfer_annotations_batch(source_pdf_path, target_dir_path):
                                     except:
                                         pass
 
-                                # === КОПИРОВАНИЕ ЦВЕТА И ШРИФТОВ ЧЕРЕЗ НИЗКОУРОВНЕВЫЕ PDF-КЛЮЧИ ===
+                                # === ЖЕСТКИЙ ПЕРЕНОС ЦВЕТА И ШРИФТОВ ЧЕРЕЗ СЫРЫЕ PDF-КЛЮЧИ ===
                                 try:
-                                    _copy_pdf_style_keys(
-                                        src_doc, annot.xref, new_annot
+                                    # Получаем доступ к низкоуровневым PDF-объектам (словарям)
+                                    src_obj = src_page.doc.xref_object(
+                                        annot.xref, compacted=True
                                     )
-                                except Exception:
-                                    pass
+
+                                    # В PDF цвет текста и параметры шрифта живут в строке /DA (Default Appearance)
+                                    # Пример: "0 0 1 rg /Helvetica 12 Tf" (где 0 0 1 - это синий цвет)
+                                    if "/DA" in src_obj:
+                                        # Извлекаем сырую строку DA из старого файла
+                                        raw_da = src_page.doc.xref_get_key(
+                                            annot.xref, "DA"
+                                        )[1]
+                                        if raw_da:
+                                            # Записываем ее напрямую в новый файл, минуя высокоуровневые методы
+                                            new_annot.set_da(
+                                                raw_da.strip("() ")
+                                            )
+
+                                    # На всякий случай копируем /C (цвет рамки) и /IC (цвет заливки фона)
+                                    if "/C" in src_obj:
+                                        raw_c = src_page.doc.xref_get_key(
+                                            annot.xref, "C"
+                                        )[1]
+                                        if raw_c:
+                                            new_annot.parent.doc.xref_set_key(
+                                                new_annot.xref, "C", raw_c
+                                            )
+
+                                    if "/IC" in src_obj:
+                                        raw_ic = src_page.doc.xref_get_key(
+                                            annot.xref, "IC"
+                                        )[1]
+                                        if raw_ic:
+                                            new_annot.parent.doc.xref_set_key(
+                                                new_annot.xref, "IC", raw_ic
+                                            )
+
+                                except Exception as raw_err:
+                                    # Если низкоуровневый разбор не удался, откатываемся на стандартные методы
+                                    try:
+                                        da_string = (
+                                            annot.parent.load_annot(annot.xref)
+                                            ._get_compiled_DA()
+                                        )
+                                        if da_string:
+                                            new_annot.set_da(da_string)
+                                    except:
+                                        pass
                         elif annot_type_num == 3:  # Line
                             new_annot = tgt_page.add_line_annot(rect.tl, rect.br)
                         elif annot_type_num == 4:  # Square / Rect
@@ -173,30 +172,28 @@ def transfer_annotations_batch(source_pdf_path, target_dir_path):
 
                     # Если аннотацию удалось создать, копируем её свойства
                     if new_annot:
-                        try:
-                            if annot_type_num != 2:
-                                new_annot.set_info(annot.info)
-                                if annot.colors:
-                                    new_annot.set_colors(annot.colors)
-                                if annot.border:
-                                    new_annot.set_border(annot.border)
-                            else:
-                                # Для текстового блока копируем только автора и тему, если они есть,
-                                # чтобы не вызвать ошибку 'Cannot be used for Free text'
+                        # Для текстовых блоков (тип 2) стандартный set_info вызывает ошибку,
+                        # поэтому настраиваем метаданные выборочно или пропускаем
+                        if annot_type_num != 2:
+                            new_annot.set_info(annot.info)
+                            if annot.colors:
+                                new_annot.set_colors(annot.colors)
+                            if annot.border:
+                                new_annot.set_border(annot.border)
+                        else:
+                            # Для текстового блока копируем только автора и тему, если они есть,
+                            # чтобы не вызвать ошибку 'Cannot be used for Free text'
+                            try:
                                 clean_info = {}
-                                if annot.info:
-                                    if "title" in annot.info:
-                                        clean_info["title"] = annot.info["title"]
-                                    if "subject" in annot.info:
-                                        clean_info["subject"] = annot.info["subject"]
+                                if "title" in annot.info:
+                                    clean_info["title"] = annot.info["title"]
+                                if "subject" in annot.info:
+                                    clean_info["subject"] = annot.info[
+                                        "subject"
+                                    ]
                                 new_annot.set_info(clean_info)
-                        except Exception:
-                            pass
-
-                        try:
-                            _copy_pdf_style_keys(src_doc, annot.xref, new_annot)
-                        except Exception:
-                            pass
+                            except:
+                                pass
 
                         new_annot.update()
 
