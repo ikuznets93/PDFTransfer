@@ -59,7 +59,8 @@ def transfer_annotations_batch(source_pdf_path, target_dir_path):
                     try:
                         if annot_type_num == 0:  # Text / Sticky Note
                             new_annot = tgt_page.add_text_annot(rect.tl)
-                        elif (
+                        
+                                                elif (
                             annot_type_num == 2
                         ):  # FreeText (Текстовые блоки / Печатный текст)
                             text_content = (
@@ -68,52 +69,73 @@ def transfer_annotations_batch(source_pdf_path, target_dir_path):
                                 else ""
                             )
 
-                            # Проверяем поворот страницы
+                            # Узнаем поворот страницы
                             page_rotation = tgt_page.rotation
 
-                            # Создаем текстовый блок
+                            # Создаем новый текстовый блок
                             new_annot = tgt_page.add_freetext_annot(
                                 rect, text_content
                             )
 
                             if new_annot:
-                                # Корректируем поворот текстового блока под поворот страницы
+                                # Исправляем поворот
                                 if page_rotation != 0:
                                     try:
                                         new_annot.set_rotation(page_rotation)
                                     except:
                                         pass
 
-                                # === НАДЕЖНЫЙ ПЕРЕНОС ЦВЕТА ШРИФТА И ОФОРМЛЕНИЯ ===
+                                # === ЖЕСТКИЙ ПЕРЕНОС ЦВЕТА И ШРИФТОВ ЧЕРЕЗ СЫРЫЕ PDF-КЛЮЧИ ===
                                 try:
-                                    # 1. Пробуем скопировать низкоуровневую строку оформления (DA),
-                                    # где зашит цвет шрифта, размер и имя шрифта
-                                    da_string = annot.parent.load_annot(
-                                        annot.xref
-                                    )._get_compiled_DA()
-                                    if da_string:
-                                        # Напрямую прописываем DA в новый объект через PDF-словарь
-                                        new_annot.set_da(da_string)
-                                except:
-                                    # 2. Если не вышло, пробуем через стандартные свойства текста
+                                    # Получаем доступ к низкоуровневым PDF-объектам (словарям)
+                                    src_obj = src_page.doc.xref_object(
+                                        annot.xref, compacted=True
+                                    )
+
+                                    # В PDF цвет текста и параметры шрифта живут в строке /DA (Default Appearance)
+                                    # Пример: "0 0 1 rg /Helvetica 12 Tf" (где 0 0 1 - это синий цвет)
+                                    if "/DA" in src_obj:
+                                        # Извлекаем сырую строку DA из старого файла
+                                        raw_da = src_page.doc.xref_get_key(
+                                            annot.xref, "DA"
+                                        )[1]
+                                        if raw_da:
+                                            # Записываем ее напрямую в новый файл, минуя высокоуровневые методы
+                                            new_annot.set_da(
+                                                raw_da.strip("() ")
+                                            )
+
+                                    # На всякий случай копируем /C (цвет рамки) и /IC (цвет заливки фона)
+                                    if "/C" in src_obj:
+                                        raw_c = src_page.doc.xref_get_key(
+                                            annot.xref, "C"
+                                        )[1]
+                                        if raw_c:
+                                            new_annot.parent.doc.xref_set_key(
+                                                new_annot.xref, "C", raw_c
+                                            )
+
+                                    if "/IC" in src_obj:
+                                        raw_ic = src_page.doc.xref_get_key(
+                                            annot.xref, "IC"
+                                        )[1]
+                                        if raw_ic:
+                                            new_annot.parent.doc.xref_set_key(
+                                                new_annot.xref, "IC", raw_ic
+                                            )
+
+                                except Exception as raw_err:
+                                    # Если низкоуровневый разбор не удался, откатываемся на стандартные методы
                                     try:
-                                        props = annot.get_text_properties()
-                                        if props:
-                                            new_annot.set_text_properties(props)
+                                        da_string = (
+                                            annot.parent.load_annot(annot.xref)
+                                            ._get_compiled_DA()
+                                        )
+                                        if da_string:
+                                            new_annot.set_da(da_string)
                                     except:
                                         pass
 
-                                # 3. Копируем цвет рамки/фона (если он был у блока в FineReader)
-                                try:
-                                    if (
-                                        hasattr(annot, "get_colors")
-                                        and annot.get_colors()
-                                    ):
-                                        new_annot.set_colors(annot.get_colors())
-                                    elif annot.colors:
-                                        new_annot.set_colors(annot.colors)
-                                except:
-                                    pass
                         elif annot_type_num == 3:  # Line
                             new_annot = tgt_page.add_line_annot(rect.tl, rect.br)
                         elif annot_type_num == 4:  # Square / Rect
