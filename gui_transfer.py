@@ -16,8 +16,6 @@ def transfer_annotations_batch(source_pdf_path, target_dir_path):
     if not os.path.exists(target_dir_path):
         raise FileNotFoundError("Целевая папка не найдена.")
 
-    # Находим все PDF-файлы в выбранной директории
-    # Исключаем сам файл-источник, если он вдруг лежит в этой же папке
     pdf_files = [
         f
         for f in os.listdir(target_dir_path)
@@ -29,7 +27,6 @@ def transfer_annotations_batch(source_pdf_path, target_dir_path):
     if not pdf_files:
         return "В выбранной папке не найдено других PDF-файлов для обработки."
 
-    # Создаем безопасную папку для результатов
     output_dir = os.path.join(target_dir_path, "processed_with_notes")
     os.makedirs(output_dir, exist_ok=True)
 
@@ -46,7 +43,6 @@ def transfer_annotations_batch(source_pdf_path, target_dir_path):
             src_doc = fitz.open(source_pdf_path)
             tgt_doc = fitz.open(target_path)
 
-            # Переносим только общие страницы
             total_pages = min(len(src_doc), len(tgt_doc))
 
             for page_num in range(total_pages):
@@ -54,34 +50,70 @@ def transfer_annotations_batch(source_pdf_path, target_dir_path):
                 tgt_page = tgt_doc[page_num]
 
                 for annot in src_page.annots():
-                    new_annot = tgt_page.add_annotation(annot.rect, annot.type)
-                    new_annot.set_info(annot.info)
+                    # Определяем числовой тип аннотации (например, 4 для Square, 8 для Highlight)
+                    annot_type_num = annot.type[0]
+                    rect = annot.rect
 
-                    if annot.colors:
-                        new_annot.set_colors(annot.colors)
-                    if annot.border:
-                        new_annot.set_border(annot.border)
+                    # Подбираем правильный метод создания в зависимости от типа
+                    new_annot = None
+                    try:
+                        if annot_type_num == 0:  # Text / Sticky Note
+                            new_annot = tgt_page.add_text_annot(rect.tl)
+                        elif annot_type_num == 3:  # Line
+                            new_annot = tgt_page.add_line_annot(rect.tl, rect.br)
+                        elif annot_type_num == 4:  # Square / Rect
+                            new_annot = tgt_page.add_rect_annot(rect)
+                        elif annot_type_num == 5:  # Circle
+                            new_annot = tgt_page.add_circle_annot(rect)
+                        elif annot_type_num == 6:  # Polygon
+                            # Попробуем извлечь вершины, если нет - берем прямоугольник
+                            vertices = annot.vertices if hasattr(annot, "vertices") else [rect.tl, rect.tr, rect.br, rect.bl]
+                            new_annot = tgt_page.add_polygon_annot(vertices)
+                        elif annot_type_num == 7:  # PolyLine
+                            vertices = annot.vertices if hasattr(annot, "vertices") else [rect.tl, rect.br]
+                            new_annot = tgt_page.add_polyline_annot(vertices)
+                        elif annot_type_num == 8:  # Highlight
+                            new_annot = tgt_page.add_highlight_annot(rect)
+                        elif annot_type_num == 9:  # Underline
+                            new_annot = tgt_page.add_underline_annot(rect)
+                        elif annot_type_num == 11:  # StrikeOut
+                            new_annot = tgt_page.add_strikeout_annot(rect)
+                        elif annot_type_num == 12:  # RubberStamp
+                            new_annot = tgt_page.add_stamp_annot(rect)
+                        else:
+                            # Для всех остальных редких типов используем универсальный резервный метод создания
+                            # (В новых версиях MuPDF добавили общий метод под именем add_annot_with_type)
+                            if hasattr(tgt_page, "add_annot_with_type"):
+                                new_annot = tgt_page.add_annot_with_type(rect, annot_type_num)
+                            elif hasattr(tgt_page, "add_annotation"):
+                                new_annot = tgt_page.add_annotation(rect, annot_type_num)
+                    except Exception as method_err:
+                        # Если специфичный метод упал, пробуем создать базовый квадрат, чтобы сохранить текст комментария
+                        try:
+                            new_annot = tgt_page.add_rect_annot(rect)
+                        except:
+                            pass
 
-                    new_annot.update()
+                    # Если аннотацию удалось создать, копируем её свойства
+                    if new_annot:
+                        new_annot.set_info(annot.info)
+                        if annot.colors:
+                            new_annot.set_colors(annot.colors)
+                        if annot.border:
+                            new_annot.set_border(annot.border)
+                        new_annot.update()
 
-            # Сохраняем сжатый результат в новую папку
             tgt_doc.save(output_path, garbage=3, deflate=True)
             success_count += 1
         except Exception as e:
             errors.append(f"Ошибка в файле {file_name}: {str(e)}")
         finally:
-            if tgt_doc:
-                tgt_doc.close()
-            if src_doc:
-                src_doc.close()
+            if tgt_doc: tgt_doc.close()
+            if src_doc: src_doc.close()
 
-    result_msg = (
-        f"Успешно обработано файлов: {success_count} из {len(pdf_files)}.\n"
-        f"Результаты сохранены в папку 'processed_with_notes'."
-    )
+    result_msg = f"Успешно обработано файлов: {success_count} из {len(pdf_files)}.\nРезультаты сохранены в папку 'processed_with_notes'."
     if errors:
         result_msg += "\n\nОшибки при обработке:\n" + "\n".join(errors)
-
     return result_msg
 
 
