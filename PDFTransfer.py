@@ -59,6 +59,7 @@ def transfer_annotations_batch(source_pdf_path, target_dir_path):
                     try:
                         if annot_type_num == 0:  # Text / Sticky Note
                             new_annot = tgt_page.add_text_annot(rect.tl)
+                        
                         elif (
                             annot_type_num == 2
                         ):  # FreeText (Текстовые блоки / Печатный текст)
