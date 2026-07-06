@@ -59,14 +59,47 @@ def transfer_annotations_batch(source_pdf_path, target_dir_path):
                     try:
                         if annot_type_num == 0:  # Text / Sticky Note
                             new_annot = tgt_page.add_text_annot(rect.tl)
-                        elif annot_type_num == 2:  # FreeText (Печатный текст / Текстовые блоки)
-                            # Извлекаем текст из старого блока, чтобы передать в новый
+                        elif (
+                            annot_type_num == 2
+                        ):  # FreeText (Текстовые блоки / Печатный текст)
                             text_content = (
                                 annot.info.get("content", "")
                                 if annot.info
                                 else ""
                             )
-                            new_annot = tgt_page.add_freetext_annot(rect, text_content)
+
+                            # Проверяем, повернута ли сама страница (0, 90, 180, 270 градусов)
+                            # Если страница повернута, MuPDF может переворачивать текст, компенсируем это
+                            page_rotation = tgt_page.rotation
+
+                            # Создаем текстовый блок
+                            new_annot = tgt_page.add_freetext_annot(
+                                rect, text_content
+                            )
+
+                            if new_annot:
+                                # Корректируем поворот текстового блока под поворот страницы
+                                if page_rotation != 0:
+                                    # В некоторых версиях поворот задается через свойства, пробуем выставить
+                                    try:
+                                        new_annot.set_rotation(page_rotation)
+                                    except:
+                                        pass
+
+                                # Пытаемся скопировать параметры шрифта и ЦВЕТА текста
+                                try:
+                                    # Вытягиваем свойства текста из старой аннотации (шрифт, размер, цвет)
+                                    props = annot.get_text_properties()
+                                    if props:
+                                        # Устанавливаем их в новый блок (сюда входит цвет шрифта)
+                                        new_annot.set_text_properties(props)
+                                except:
+                                    # Резервный способ скопировать цвет шрифта, если get_text_properties не сработал
+                                    try:
+                                        if hasattr(annot, "get_colors") and annot.get_colors():
+                                            new_annot.set_colors(annot.get_colors())
+                                    except:
+                                        pass
                         elif annot_type_num == 3:  # Line
                             new_annot = tgt_page.add_line_annot(rect.tl, rect.br)
                         elif annot_type_num == 4:  # Square / Rect
