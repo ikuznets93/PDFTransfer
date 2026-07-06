@@ -104,11 +104,29 @@ def transfer_annotations_batch(source_pdf_path, target_dir_path):
 
                     # Если аннотацию удалось создать, копируем её свойства
                     if new_annot:
-                        new_annot.set_info(annot.info)
-                        if annot.colors:
-                            new_annot.set_colors(annot.colors)
-                        if annot.border:
-                            new_annot.set_border(annot.border)
+                        # Для текстовых блоков (тип 2) стандартный set_info вызывает ошибку,
+                        # поэтому настраиваем метаданные выборочно или пропускаем
+                        if annot_type_num != 2:
+                            new_annot.set_info(annot.info)
+                            if annot.colors:
+                                new_annot.set_colors(annot.colors)
+                            if annot.border:
+                                new_annot.set_border(annot.border)
+                        else:
+                            # Для текстового блока копируем только автора и тему, если они есть,
+                            # чтобы не вызвать ошибку 'Cannot be used for Free text'
+                            try:
+                                clean_info = {}
+                                if "title" in annot.info:
+                                    clean_info["title"] = annot.info["title"]
+                                if "subject" in annot.info:
+                                    clean_info["subject"] = annot.info[
+                                        "subject"
+                                    ]
+                                new_annot.set_info(clean_info)
+                            except:
+                                pass
+
                         new_annot.update()
 
             tgt_doc.save(output_path, garbage=3, deflate=True)
