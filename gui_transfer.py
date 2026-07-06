@@ -54,7 +54,7 @@ def transfer_annotations_batch(source_pdf_path, target_dir_path):
                 tgt_page = tgt_doc[page_num]
 
                 for annot in src_page.annots():
-                    new_annot = tgt_page.add_annot(annot.rect, annot.type)
+                    new_annot = tgt_page.add_annotation(annot.rect, annot.type)
                     new_annot.set_info(annot.info)
 
                     if annot.colors:
