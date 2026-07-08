@@ -74,7 +74,7 @@ def transfer_annotations_batch(source_pdf_path, target_dir_path):
 
                             # Создаем новый текстовый блок
                             new_annot = tgt_page.add_freetext_annot(
-                                rect, text_content
+                                rect, text_content, text_color=(1,0,0)
                             )
 
                             if new_annot:
@@ -87,7 +87,7 @@ def transfer_annotations_batch(source_pdf_path, target_dir_path):
 
                                 # === ЖЕСТКИЙ ПЕРЕНОС ЦВЕТА И ШРИФТОВ ЧЕРЕЗ СЫРЫЕ PDF-КЛЮЧИ ===
                                 try:
-                                    # Получаем доступ к низкоуровневым PDF-объектам (словарям)
+                                    # Получаем доступ кrichtext низкоуровневым PDF-объектам (словарям)
                                     src_obj = src_page.doc.xref_object(
                                         annot.xref, compacted=True
                                     )
